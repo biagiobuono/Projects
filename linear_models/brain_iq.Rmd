@@ -1,0 +1,485 @@
+---
+title: "Analysis of the relationship between brain IQ and its dimension"
+author: "Biagio Buono 5206214"
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r include=FALSE}
+library(dplyr)
+library(magrittr)
+library(leaps)
+library(boot)
+library(faraway)
+library(car)
+library(tidyverse)
+library(knitr)
+library(corrplot)
+library(effects)
+```
+
+## 1. Dataset
+
+The data are based on a study by Willerman et al. (1991) of the relationships between brain size, gender and intelligence.
+The research participants consisted of 40 right-handed introductory psychology students, with no history of alcoholism, unconsciousness, brain damage, epilepsy or heart disease, who were selected from a larger pool of introductory psychology students with total Scholastic Aptitude Test Scores higher than 1350 or lower than 940.
+The students in the study took four subtests of the Wechsler (1981) Adult Intelligence Scale-Revised.
+Among the students with Wechsler full-scale IQ's less than 103, 10 males and 10 females were randomly selected.
+Similarly, among the students with Wechsler full-scale IQ's greater than 130, 10 males and 10 females were randomly selected.
+
+The dataset contains 5 variables that are:
+
+-   **Gender**
+
+-   **IQ:** It represents the score obtained at the assessment test; this is a valid measure of the intelligence because it is the most plausible measurement which can be taken, and it is also a reliable measure since it is precise and stable, and if the experiment could be retaken, the values obtained probably would not change much
+
+-   **Weight:** It is the person's weight, expressed in pounds
+
+-   **Height:** It is the brain height, expressed in inches
+
+-   **Size:** It represents the brain dimension, expressed in pixel
+
+The following functions present an overview of the dataset used in the analysis and data structure, allowing to know the type of variables.
+The Gender variable is recorded as a Factor, which is used to categorize and store the data, having a limited number of different values: in this case the values are 1, 2, which correspond to the modalities of the variable, "Female" and "Male"; the quantitative variables, instead, are saved as numeric, which is the default data type for numbers in R.
+
+```{r}
+brain = read.table("brain.txt", header = TRUE)
+```
+
+```{r include=FALSE}
+brain <- brain %>%
+  rename(Gender = gender, IQ = iq, Weight = weight, Height = height, Size = size)
+```
+
+```{r}
+head(brain)
+```
+
+```{r include=FALSE}
+brain$Gender <- as.factor(brain$Gender)
+brain$IQ <- as.numeric(brain$IQ)
+brain$Weight <- as.numeric(brain$Weight)
+brain$Size <- as.numeric(brain$Size)
+```
+
+```{r}
+str(brain)
+```
+
+In order to make the analysis more clear and understandable, the Height unit of measurement has been converted into centimeters, by multiplying the quantities by 2.54, and the quantitative covariates have been centered with respect to their mean values.
+
+```{r include=FALSE}
+brain$Height <- brain$Height * 2.54
+mean_Size <- mean(brain$Size)
+mean_Height <- mean(brain$Height)
+mean_Weight <- mean(brain$Weight)
+centered_Size <- brain$Size - mean_Size
+centered_Height <- brain$Height - mean_Height
+centered_Weight <- brain$Weight - mean_Weight
+brain <- mutate(brain, centerSize = centered_Size)
+brain <- mutate(brain, centerHeight = centered_Height)
+brain <- mutate(brain, centerWeight = centered_Weight)
+brain <- select(brain, -c(Height, Size, Weight))
+brain <- brain %>%
+  rename(Size = centerSize, Height = centerHeight, Weight = centerWeight)
+```
+
+## 2. Goals
+
+The goal of this analysis is to explore association between explanatory variables and the response variable `IQ`.
+The data are suitable to address this aim because they provide information about different kinds of attributes regarding the brain and the person that may be associated to an increase in the intelligence quotient.
+
+## 3. Relation among all variables
+
+```{r echo=FALSE, fig.height=4}
+pairs(IQ ~ Weight + Height + Size, data = brain, pch = 16, col = 'darkgreen')
+```
+
+*Figure 1: Scatterplot matrix of quantitative variables*
+
+Looking at the scatterplot matrix in Figure 1, the overall impression is that all the explanatory variables are weakly associated with the response (`IQ`), while they are quite positively related one to each other, although there is a bit of variation.
+
+```{r echo=FALSE, fig.width=6, fig.height=4}
+boxplot(IQ ~ Gender, data = brain, col = c(2,4))
+```
+
+*Figure 2: Boxplots of IQ as a function of Gender*
+
+In Figure 2, it seems the boxplots are quite overlapped, since the median and the first quartile are basically identical, and there is only a slight difference for the third one.
+Therefore, females and males do not have different IQs and it is not expected that the Gender variable is significant to explain the variability of `IQ`.
+
+## 4. Best Subset Selection
+
+To explore all the possible models, all the available covariates are considered, and it is also included an interaction term given by the product between the variables `Height` and `Size`, since they should be linearly dependent and grow in a similar way.
+A separate least squares regression is fitted for each possible combination of the $p$ predictors, meaning that we fit all $p$ models that contain exactly one predictor, all $p(p-1)/2$ models that contain exactly two predictors, and so on.
+Then we look at all of the resulting models, with the goal of identifying the one that is *best*.
+
+```{r}
+ols = regsubsets(IQ ~ Weight + Gender + Height * Size, data = brain)
+summary(ols)
+```
+
+An asterisk indicates that a given variable is included in the corresponding model.
+For instance, this output indicates that the best two-variable model contains only `Height` and `Size`.
+As expected, instead, the Gender predictor is the last added to the model, confirming what observed in the previous plot.
+
+## 5. Best overall model
+
+Best Subset Selection procedure allows to identify the best model for each subset size, reducing the problem from one of $2^p$ possible models to one of $p+1$ possible models.
+Then, a single best model may be chosen using $AIC$, $BIC$, $adjusted$ $R^2$, $Mallow's$ $C_p$ and $Cross-validation$ $error$.
+
+```{r, fig.height=2.5}
+summ = summary(ols)
+par(pty='s', mfrow=c(1,4), mar=c(2,1,2,1))
+
+#BIC
+plot(summ$bic, type="b", pch=19,
+     xlab="Number of predictors", ylab="", main="Drop in BIC")
+abline (v=which.min(summ$bic),col = 2, lty=2) 
+
+# Cp
+plot(summ$cp, type="b", pch=19,
+xlab="Number of predictors", ylab="", main="Mallow's Cp")
+abline (v=which.min(summ$cp),col = 2, lty=2)
+
+#R2
+plot(summ$adjr2, type="b", pch=19,
+xlab="Number of predictors", ylab="", main="Adjusted Rˆ2")
+abline (v=which.max(summ$adjr2),col = 2, lty=2)
+
+#AIC
+i = 1
+p = 5
+n = nrow(brain)
+aic = matrix(NA, p, 1)
+for(i in 1:p){
+  aic[i] = summ$bic[i] - (i+2)*log(n) + 2*(i+2)
+}
+plot(aic, type = 'b', pch = 19,
+     xlab="Number of predictors", main="Drop in AIC")
+abline(v=which.min(aic), col=2, lty=2)
+```
+
+*Figure 3:* $BIC$, $C_p$, $adjusted$ $R^2$ *and* $AIC$ *for the best models of each size*
+
+Plotting $AIC$, $BIC$, $C_p$ and $adjusted$ $R^2$ for all of the models at once allows to determine that the best overall model is a model which contains only two predictors, `Height` and `Size` according to the results of the *regsubsets()* function.
+
+In order to estimate the test error rate, it is used the *Leave-one-out cross-validation* (LOOCV) approach, in which a single observation is used for the validation set, and the remaining observations make up the training set.
+Repeating this approach *n* times produces *n* squared errors, $MSE_1$,...,$MSE_n$.
+The LOOCV estimate for the test MSE is the average of these *n* test error estimates.
+
+```{r}
+p <- 5
+k <- nrow(brain) 
+set.seed (1)
+folds <- sample (1:k, nrow(brain), replace = FALSE)
+cv.errors <- matrix (NA, k, p, dimnames = list(NULL, paste (1:p)))
+
+for(j in 1:k){
+best.fit = regsubsets (IQ ~ Weight + Gender + Height * Size, data=brain[folds!=j,]) 
+for(i in 1:p) {
+    mat <- model.matrix(as.formula(best.fit$call[[2]]), brain[folds==j,])
+    coefi <- coef(best.fit, id = i)
+    xvars <- names(coefi)
+    pred <- mat[,xvars] %*% coefi
+    cv.errors[j,i] <- mean((brain$IQ[folds==j] - pred)**2)
+}
+}
+
+cv.mean = colMeans(cv.errors)
+cv.mean
+```
+
+```{r echo=FALSE, fig.height=2.9}
+plot(cv.mean ,type="b", pch=19,
+     xlab="Number of predictors",
+     ylab="CV error")
+abline(v=which.min(cv.mean), col=2, lty=2)
+```
+
+*Figure 4: Cross-validation error for the best models of each size*
+
+This approach also allows to conclude that the best model is a two-variable model.
+
+## 6. Collinearity issues
+
+As previously observed while examining the scatterplot matrix, the predictors are quite positively related one to each other, and this observation is also reinforced by the matrix of sample correlations, shown in Table 1, since the correlation coefficient is greater than 0.50.
+
+```{r echo=FALSE}
+brain2 = select(brain, IQ, Height, Size)
+kable(cor(brain2[sapply(brain2, is.numeric)]))
+```
+
+*Table 1: Sample correlations for the best model*
+
+```{r eval=FALSE, fig.height=2.7, include=FALSE}
+correlation.matrix <- cor(brain2[sapply(brain2, is.numeric)])
+corrplot(correlation.matrix, method = 'circle', type = 'lower')
+```
+
+However, a better way to determine whether there is collinearity between some predictors is to compute the Variance Inflation Factor (VIF), which is the ratio of the variance of $\hat{\beta}_j$ when fitting the full model divided by the variance of $\hat{\beta}_j$ if fit on its own.
+Generally, a VIF\>10 indicates a significant and problematic amount of collinearity.
+In this case, it seems there is not a meaningful amount of collinearity between the predictors.
+
+```{r echo=FALSE}
+best.ols = lm(IQ ~ Height + Size, data = brain)
+kable(vif(best.ols), col.names = "VIF")
+```
+
+## 7. Diagnostics
+
+### 7.1 Constant variance
+
+One of the main assumptions to build a linear model is constant variance that can be detected from the residual plot:
+
+```{r echo=FALSE, fig.height=3.5}
+plot(fitted(best.ols), residuals(best.ols),
+     xlab = "Fitted values", ylab = "Residuals",
+     pch = 19, cex = 0.8)
+abline(h = 0, col = 2)
+```
+
+*Figure 5: Residuals vs Fitted values*
+
+The residuals seem to decrease in average magnitude as the fitted values increase, meaning that there could be a nonconstant residual variance issue.
+
+### 7.3 Relationship between the predictors and the response
+
+```{r echo=FALSE, fig.height=3.6}
+residualPlots(best.ols, tests=FALSE)
+```
+
+*Figure 6: Residual plots*
+
+The first plot seems to resemble enough a null plot, although there could be a slight non linearity issue, while in the plot that represents the residuals against the Size predictor, a nonconstant variance issue can be identified, since there is a sort of left opening megaphone structure.
+
+### 7.2 Normality assumption
+
+Normality assumption can be tested with QQ-plot, shown in Figure 7, and the Shapiro-Wilk Normality Test, according to which the normality assumption should be rejected if the statistic W is too small.
+
+```{r echo=FALSE, fig.height=3.5}
+qqnorm(residuals(best.ols), ylab = "Residuals")
+qqline(residuals(best.ols), col = 'darkgreen', lwd = 2)
+```
+
+*Figure 7: Q-Q plot of the residuals*
+
+```{r echo=FALSE}
+shapiro.test(residuals(best.ols))
+```
+
+Although the Q-Q plot of the residuals seems not to strongly resemble a normal distribution, since a short-tailed distribution could be identified, however the normality assumption is not rejected since the p-value associated to the Shapiro-Wilk test is quite large.
+
+### 7.3 Large leverage points
+
+Observations with high leverage have unusual values of the predictors and have the potential to cause large changes in the parameter estimates when they are deleted.
+In order to identify them, it is useful to compute the leverage associated with each observation.
+
+```{r}
+infl = influence(best.ols)
+hat = infl$hat
+hat[which(hat>=(2*3)/nrow(brain))]
+```
+
+```{r, fig.height=3.5}
+halfnorm(hat, 4, labs = rownames(brain), ylab = 'Leverages')
+```
+
+*Figure 8: Half-normal plot for the leverages*
+
+Figure 8 shows the leverage of the observations, highlighting those that can be considered high leverage points.
+
+### 7.4 Outliers
+
+The standardized (or studentized) residuals are computed to identify outliers, which are cases that do not follow the same model as the rest of the data.
+As a rule of thumb, if the value of a standardized residual is greater than \|3\|, then the corresponding case may be an outlier.
+
+```{r}
+rsta = rstandard(best.ols)
+range(rsta)
+```
+
+```{r eval=FALSE, fig.height=3.5, include=FALSE}
+plot(fitted(best.ols), rsta,
+     xlab = "Fitted values", ylab = "Standardized residuals",
+     pch = 16, cex = 0.8,
+     ylim = c(-3,3))
+abline(h = 0, col = 2)
+```
+
+```{r, fig.height=3.5}
+plot(rsta, ylim = c(-4,4), ylab = "Studentized residuals", pch=16, cex = 0.8)
+abline(h = 3, lty = 2, col = 'red', lwd = 2)
+abline(h = -3, lty = 2, col = 'red', lwd = 2)
+```
+
+*Figure 9: Standardized Residuals vs Fitted values*
+
+The standardized residuals are contained in the range (-1.7,2.15), then there are not outliers.
+
+### 7.5 Influential points
+
+An influential point is one whose removal from the dataset would cause a large change in the fit.
+
+```{r, fig.height=3.5}
+cook = cooks.distance(best.ols)
+halfnorm(cook, 1, labs = rownames(brain), ylab = 'Cook')
+```
+
+*Figure 10: Half-normal plot of the Cook statistics*
+
+Figure 10 shows that the observation 14 has a high Cook's distance compared with the other observations, then it must be investigated.
+
+## 8. Improvement of the model
+
+Since the model seems to have only a nonconstant variance issue, some variance stabilizing transformations may be used to improve it.
+Moreover, it's interesting too see how the model vary without the observation 14, which has a high Cook's distance compared with the other observations, as observed above.
+Therefore, three new fittings have been created:
+
+1.  OLS fitting with the same predictors as before but removing the most influential point, even if it does not exceed the threshold accepted as rule of thumb.
+
+2.  OLS fitting with the same predictors and n observations but with a transformation of the response variable that is considered as ${\sqrt(IQ)}$.
+
+3.  OLS fitting with the same predictors and n observations but with a transformation of the response that is considered as $ln(IQ)$.
+
+```{r echo=FALSE, fig.height=3}
+par(mfrow=c(1,3))
+best.ols2 = lm(IQ ~ Height + Size, data = brain, subset = (cook<max(cook)))
+plot(fitted(best.ols2), residuals(best.ols2),
+     xlab = "Fitted values", ylab = "Residuals", main = "OLS without observation 14",
+     pch = 19, cex = 0.8, col = 'orangered2')
+best.ols3 = lm(sqrt(IQ) ~ Height + Size, data = brain)
+plot(fitted(best.ols3), residuals(best.ols3),
+     xlab = "Fitted values", ylab = "Residuals", main = "OLS with sqrt(IQ)",
+     pch = 19, cex = 0.8, col = 'darkorange')
+best.ols4 = lm(log(IQ) ~ Height + Size, data = brain)
+plot(fitted(best.ols4), residuals(best.ols4),
+     xlab = "Fitted values", ylab = "Residuals", main = "OLS with ln(IQ)",
+     pch = 19, cex = 0.8, col = 'goldenrod1')
+```
+
+*Figure 11: Left: Residual plot of the model without observation 14. Center: Residual plot of the model with sqrt(IQ). Right: Residual plot of the model with ln(IQ).*
+
+Figure 11 shows that none of the transformations brings some remarkable improvements to the model, therefore the model computed upon all the observations and without the response variable being transformed is kept.
+
+Then the assumption of constant variance will be not valid, having some consequences.
+Least squares estimators are still unbiased, but, due to the fact that the Gauss-Markov Theorem depends on the assumption that variance is constant, the estimator will not be BLUE (Best Linear Unbiased Estimator).
+Because of this, the following analysis could be quite unreliable and the OLS estimator will not be efficient.
+
+## 9. Parameters and Uncertainties
+
+```{r}
+best.ols = lm(IQ ~ Height + Size, data = brain)
+summary(best.ols)
+```
+
+The fitted model is $\hat{y} = \hat{\beta}_0 + \hat{\beta}_1x_1 + \hat{\beta}_2x_2$:
+
+-   $\hat{\beta}_0$ = 113.5 means that the intelligence quotient is on average equal to 113.5 when all the predictors take on their mean values.
+    Thus a person will have an IQ of 113.5 when he/she has the average features of the students involved in the analysis.
+    The standard error associated to the intercept is 3.3, thus the value of ${\beta}_0$ varies in the range (110.2, 118.8).
+
+-   $\hat{\beta}_1$ = -2.87 indicates that increasing the brain height by a centimeter is associated with an expected decrease of IQ of about 3 points, "ceteris paribus", that is holding the other predictor constant.
+    The standard error is 10.05, and then increasing the brain height by a centimeter could cause a decrease of the IQ of 2.87 $\pm$ 10.05.
+
+-   $\hat{\beta}_2$ = 0.00022 implies, instead, that increasing the brain size by a pixel is associated with an expected increase of IQ of about 0.00022 points, when the other predictor is held constant.
+    The associated standard error is approximately zero, probably because this coefficient is quite small, since the unit of measurement of the predictor is pixel.
+
+```{r echo=FALSE, fig.height=3}
+e1.best.ols = predictorEffect("Height", best.ols)
+plot(e1.best.ols)
+```
+
+*Figure 12: Height predictor effect plot*
+
+```{r echo=FALSE, fig.height=3}
+e2.best.ols = predictorEffect("Size", best.ols)
+plot(e2.best.ols)
+```
+
+*Figure 13: Size predictor effect plot*
+
+## 10. Testing each of the predictors
+
+Each predictor is tested with the following set of hypotheses:
+
+$$
+\begin{cases}H_0:  & \text{$\beta_j$ = 0, other predictor arbitrary} \\ H_1:  & \text{$\beta_j \neq 0$, other predictor arbitrary}\end{cases}
+$$
+
+The t-tests for each predictor and the associated p-values are:
+
+```{r}
+summ.best = summary(best.ols)
+(summ.best$coefficients)[, c(3,4)]
+```
+
+The confidence intervals with a confidence level of 95% for each parameter are:
+
+```{r}
+confint(best.ols, level = 0.95)
+```
+
+The two previous outputs provide evidence against the null hypothesis for all the parameters, meaning that none of them should be erased from the model, since the p-values associated to the t-tests for the predictors are sufficiently small and their confidence intervals with a significance level of 95% do not include 0.
+
+## 11. Testing all the regressors
+
+In order to test all the regressors, it is used the overall F-test, which compares the null model with no predictors except for the intercept as NH with the AH fitting all the regressors:
+
+$$
+\begin{cases}H_0: & \text{$\beta_1$ = $\beta_2$ = 0} \\ H_1: & \text{$\beta_1$, $\beta_2 \neq 0$}\end{cases}
+$$
+
+```{r}
+ols.nul = lm(IQ ~ 1, data = brain)
+anova(ols.nul, best.ols)
+```
+
+The ANOVA table shows that the p-value associated to the test is quite small, therefore it is possible to reject the null hypothesis, meaning that the model previously selected is significant in explaining the variability of the response variable.
+
+## 12. Residual standard error and Coefficient of determination
+
+To appreciate the goodness of fit of the previously selected best model, the residual standard error and the R-squared are taken into account.
+
+```{r include=FALSE}
+summ.best$sigma
+summ.best$r.squared
+summ.best$adj.r.squared
+```
+
+The model has an $R^2 = 0.285$ and an $adjusted$ $R^2 = 0.2463$, meaning that it explains approximately 28.5% of the variability of the response variable `IQ`.
+The standard deviation of the model is approximately 20.91, meaning that each prediction on the intelligence quotient of a person should be considered in the range $\hat{y} \pm 20.91$, which is quite large considering that the average value of the intelligence quotient is approximately 100.
+
+## 13. Prediction
+
+Considering a new observation with the following features (`Height` = 7.5030, `Size` = 1090000) it is possible to predict the intelligence quotient of the person with the corresponding prediction interval:
+
+```{r}
+newHeight = 7.5030
+newSize = 1090000
+newdata = data.frame(Height = newHeight-mean_Height, Size = newSize-mean_Size)
+predict(object = best.ols, newdata = newdata, interval = 'predict')
+```
+
+The result is that a person with brain height and size as specified above, has a predictive intelligence quotient of 145.12, and the associated 95% confidence interval is [98.44, 191.81], which is quite large.
+
+## 14. Simulation based on the estimated parameters
+
+It is possible to simulate the values for the response variable using the previously selected best regression model and adding random noise.
+
+```{r, fig.height=3.5}
+# simulating values based on the estimated parameters
+s = coef(best.ols) %*% t(model.matrix(best.ols)) + rnorm(n = n, mean = 0, sd = summ.best$sigma)
+plot(s, brain$IQ, cex = 0.8, pch = 16,
+     xlab = "Simulated values", ylab = "Observed values")
+lines(c(-10,200), c(-10,200), col = 'red', lwd = 1, lty = 4)
+```
+
+*Figure 14: Simulated response vs observed response*
+
+The plot, which represents the observed values against the simulated values for the response variable, shows that just one point lies on the diagonal line and some of them are really far from it, meaning that the fitted model is not actually precise.
