@@ -1,0 +1,980 @@
+---
+title: "Project Statistical Learning"
+author: "Lorenzo Saracino - Biagio Buono - Leonardo Puricelli"
+date: "Group 5"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(fields)
+library(mclust)
+library(glmnet)
+library(ISLR)
+library(splines)
+library(gam)
+library(ROCR)
+library(MASS)
+library(e1071)
+library(randomForest)
+library(gbm)
+library(caret)
+library(tree)
+library(tidyverse)
+library(ggplot2)
+library(class)
+library(reshape2)
+library(corrplot)
+library(leaps)
+library(knitr)
+library(kableExtra)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(ROCR)
+rocplot = function(pred, truth, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob , "tpr", "fpr") 
+  plot(perf ,...)
+  auc = performance(predob , "auc")
+  return(attributes(auc)$y.values)
+}
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+draw_confusion_matrix = function(cm){
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  rect(150, 430, 240, 370, col='#3F97D0')
+  text(195, 440, 'No', cex=1.2)
+  rect(250, 430, 340, 370, col='#F7AD50')
+  text(295, 440, 'Yes', cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 448, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col='#F7AD50')
+  rect(250, 305, 340, 365, col='#3F97D0')
+  text(140, 400, 'No', cex=1.2, srt=90)
+  text(140, 335, 'Yes', cex=1.2, srt=90)
+
+  res = as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", 
+       xaxt='n', yaxt='n')
+  text(10, 90, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 90, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 90, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 90, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 90, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  text(50, 45, names(cm$overall[1]), cex=1.5, font=2)
+  text(50, 20, round(as.numeric(cm$overall[1]), 3), cex=1.5)
+}
+```
+
+# Introduction
+
+Most companies try to boost their business through marketing selling campaigns, particularly those conducted through direct marketing via contact centers. Direct marketing consists of any marketing that relies on direct communication or distribution to individual consumers, rather than through a third party such as mass media. It involves targeting specific segments of customers and contacting them with a particular goal in mind. Contact centers are centralized hubs for managing customer interactions remotely and they make easier to handle all the operational aspects of the marketing campaigns of a company.
+
+In this context, one of the most complex tasks is represented by the choice of the most suitable clients, i.e. those who are more likely to subscribe to a product or service. We want to conduct an analysis on a data set reporting the details of several direct marketing campaigns of a Portuguese banking institution, in order to provide a model that is able to predict the result of a marketing campaign on the basis of a series of variables and to allow the institution to identify the clients who will more likely subscribe to their products.
+
+The data set is public available for research [[*here*]{.underline}](https://www.kaggle.com/datasets/volodymyrgavrysh/bank-marketing-campaigns-dataset). The details are described in S. Moro, P. Cortez and P. Rita. A Data-Driven Approach to Predict the Success of Bank Telemarketing. Decision Support Systems, Elsevier, 62:22-31, June 2014.
+
+```{r}
+data = read.csv("/Users/biagiobuono/Documents/Statistical learning/Project/bank-additional-full.csv",sep=";")
+```
+
+The data set consists of 41188 observations, reporting for each one the value of 21 variables, where *y* denotes the response variable, that is the result of a marketing campaign. It is binary, that is equal to *yes* if the client has subscribed to the product, that is a term deposit, and *no* otherwise. The outcome of the campaign depends on several variables, such as:
+
+-   *individual features*, representing some attributes of the clients, like their age, their job, if they are married or not, and their educational level;
+
+-   *bank client data*, offering insights into clients' positions, encompassing whether he/she has an housing loan, a credit in default or a personal loan;
+
+-   *last contact data*, providing information about the most recent interaction for the current campaign with the client, detailing the contact communication type (cellular or telephone), the day and the month of the contact, and its duration;
+
+-   *marketing campaigns data*, that illustrate the number of interactions with the client during the current campaign, the number of days that passed after that the client was last contacted for a different campaign, the overall number of interactions with the client, and the outcome of the previous marketing campaign;
+
+-   *social and economic context attributes*, like the employment variation rate, the consumer price index, the consumer confidence index, the euribor rate at three months, and the quarterly indicator about the number of employees. These indicators allow us to have a better understanding of the macroeconomic conditions that could have lead a client to subscribe or not to the product.
+
+```{r}
+str(data)
+```
+
+We remove some variables from the data set since they do not bring valuable information for the problem:
+
+-   the *default* variable shows that all the clients, except for three of them, have no credits in default;
+
+-   the *duration* of the most recent interactions is obviously known only when the contact is over, i.e. when also the result of the talking is known. Then, it would be quite unrealistic to use it for predicting the result of a marketing campaign;
+
+-   finally, the *pdays* variable shows that more than 95% of the clients have never previously contacted (since 999 means no previous interactions).
+
+```{r}
+df = data[,-c(5,11,13)]
+```
+
+Before delving into the analysis, we convert all categorical variables in the dataset into factors, facilitating an easier treatment of them during model fitting.
+
+```{r include=FALSE}
+df$job = as.factor(df$job)
+df$marital = as.factor(df$marital)
+df$education = as.factor(df$education)
+df$housing = as.factor(df$housing)
+df$loan = as.factor(df$loan)
+df$contact = as.factor(df$contact)
+df$campaign = as.numeric(df$campaign)
+df$previous = as.numeric(df$previous)
+df$poutcome = as.factor(df$poutcome)
+df$y = as.factor(df$y)
+df$day_of_week = as.factor(df$day_of_week)
+df$month = as.factor(df$month)
+```
+
+```{r}
+# remove NAs and missing values marked as 'unknown'
+df = subset(df, !apply(df, 1, function(row) any(row == "unknown")))
+df = droplevels(df)
+
+cat("                      obs   p", "\n")
+cat("Data set dimension: ", dim(df))
+```
+
+# Exploratory analysis
+
+We would like to have a better understanding of the data before proceeding with the analysis, in order to correctly identify the problem and define a strategy to solve it. Hence, we explore the distribution of some of the variables in the data set to figure out how they behave, comparing the subscription rates.
+
+The jobs distribution does not illustrate significant differences between the clients who have subscribed to the product and those who have not. We can just observe that blue-collars may be less inclined to subscribe to the term deposit, while retired clients and admins may be more interested in this type of product.
+
+```{r}
+## JOB DISTRIBUTION
+df.yes = df[df$y == 'yes',]
+df.no = df[df$y == 'no',]
+
+job.counts.yes = round(prop.table(table(df.yes$job)) * 100, 2)
+
+df.plot = data.frame(Job = names(job.counts.yes), Percentage = as.numeric(job.counts.yes))
+df.plot = df.plot[order(-df.plot$Percentage), ]
+ggplot(df.plot, aes(x = Job, y = Percentage, fill = Job)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", 
+                               "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", 
+                               "#e41a1c", "#4daf4a")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Job's distribution between subscribers", y = "Percentage (%)", x = "Job") +
+  ylim(0, 32)
+
+job.counts.no = round(prop.table(table(df.no$job)) * 100, 2)
+
+df.plot = data.frame(Job = names(job.counts.no), Percentage = as.numeric(job.counts.no))
+df.plot = df.plot[order(-df.plot$Percentage), ]
+ggplot(df.plot, aes(x = Job, y = Percentage, fill = Job)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", 
+                               "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", 
+                               "#e41a1c", "#4daf4a")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Job's distribution between not subscribers", y = "Percentage (%)", x = "Job") +
+  ylim(0, 32)
+```
+
+Clients who decide to subscribe to the term deposit seem to be older in average with respect to those who do not subscribe to it, maybe because younger people, due to their various daily commitments such as education, transportation, and entertainment, may have a greater need for money for immediate and urgent expenses compared to older individuals.
+
+```{r message=FALSE, warning=FALSE}
+# Plot for subscribers
+ggplot(df.yes, aes(x = age)) +
+  geom_histogram(aes(y = ..density..), binwidth = 3, fill = "blue", color = "white", alpha = 0.8) +
+  labs(x = "Age", y = "Density", title = "Density Histogram of Ages Among Subscribers") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Plot for non-subscribers
+ggplot(df.no, aes(x = age)) +
+  geom_histogram(aes(y = ..density..), binwidth = 3, fill = "blue", color = "white", alpha = 0.8) +
+  labs(x = "Age", y = "Density", title = "Density Histogram of Ages Among Non-Subscribers") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The marketing campaign details also seem to be quite relevant to subscribe or not to the term deposit.
+
+Actually, the contact method that seems to be more effective is the cellular, since the most part of the clients who have subscribed to the deposit have been contacted through cellular.
+
+```{r}
+par(mfrow = c(1,2))
+barplot(prop.table(table(df.yes$contact)), main = "Subscribers", 
+        xlab = "Contact Method", ylab = "Proportion", col = c('tomato2', 'seagreen'),
+        ylim = c(0, 0.9))
+barplot(prop.table(table(df.no$contact)), main = "Not Subscribers", 
+        xlab = "Contact Method", ylab = "Proportion", col = c('tomato2', 'seagreen'),
+        ylim = c(0, 0.9))
+```
+
+On the other hand, the day of the week when the client is contacted does not seem to heavily influence the outcome of the marketing campaign, contrarily to the month. Indeed, the result of the interaction tends to be positive when the client is contacted during the spring and summer months.
+
+```{r, fig.width=12}
+par(mfrow = c(1,2))
+barplot(prop.table(table(df.yes$day_of_week)), main = "Contact Day", 
+        xlab = "Day", ylab = "Proportion", col = viridis(5))
+barplot(prop.table(table(df.yes$month)), main = "Contact Month", 
+        xlab = "Month", ylab = "Proportion", col = terrain.colors(10))
+```
+
+Moreover, prior contact by the institution before the current campaign appears to positively influence the client's inclination towards subscribing to the product.
+
+```{r warning=FALSE}
+par(mfrow= c(1,2))
+hist(df.yes$previous, bins = 50, freq = F, ylim = c(0, 1.8),  main = "Subscribers", 
+        xlab = "Number of contacts", ylab = "Proportion", col = 'blue')
+hist(df.no$previous, bins = 50, freq = F, ylim = c(0, 1.8), main = "Not Subscribers", 
+        xlab = "Number of contacts", ylab = "Proportion", col = 'blue')
+```
+
+Finally, if the previous marketing campaign has been resulted in a success, there will be more probabilities that the client will subscribe to the deposit.
+
+```{r, fig.width=8}
+par(mfrow = c(1,2))
+barplot(prop.table(table(df.yes$poutcome)), main = "Subscribers", 
+        xlab = "Outcome", ylab = "Proportion", col = c('tomato2', 'lightgrey', 'seagreen'),
+        ylim = c(0, 0.9))
+barplot(prop.table(table(df.no$poutcome)),  main = "Not Subscribers", 
+        xlab = "Outcome", ylab = "Proportion", col = c('tomato2', 'lightgrey', 'seagreen'),
+        ylim = c(0, 0.9))
+```
+
+However, as we have observed in the previous plots, the clients that have subscribed to the term deposit represent only the 11.1% of the whole set. As a consequence, we deal with a really unbalanced data set, that could lead to a misleading performance of the models that we will implement.
+
+```{r}
+y_counts = table(df$y)
+
+y_pie = data.frame(Subscription = names(y_counts), Count = as.numeric(y_counts))
+
+ggplot(y_pie, aes(x = "", y = Count, fill = Subscription)) +
+  geom_bar(width = 1, stat = "identity") +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = sprintf("%1.1f%%", (Count/sum(Count))*100)), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = c("lightslateblue", "mediumseagreen")) +
+  theme_void() +
+  labs(title = "Subscription to the product")
+```
+
+Hence, to enhance the reliability of our analysis, we proceed to rebalance the data set. In particular, we divide the data set into train and test sets, such that the test represents the 15% of the whole data set and accurately represents the data structure. The train, instead, is firstly set equal to the 85% and then rebalanced so that the number of clients who do not subscribe to the product is equal to the number of clients who subscribe to it.
+
+```{r message=FALSE, warning=FALSE}
+n = dim(df)[1]
+p = dim(df)[2] - 1
+i1 = which(df$y=="no")
+i2 = which(df$y=="yes")
+
+set.seed(22)
+select.test = sample(1:n,n*1.5/10)
+test = as.data.frame(df[select.test ,])
+
+select.train = sample(i1[-select.test],3650)
+train = as.data.frame(df[c(select.train,i2[-select.test]),])
+
+cat("           no   yes", "\n")
+cat("Train set:", table(train$y), "\n")
+cat("Test set: ", table(test$y))
+```
+
+# Original data set
+
+In classification problems like this one, we want to forecast the outcome of the marketing campaign, that is represented by a binary variable. To achieve this, we employ several models in the following and compare their performance to identify the most effective one.
+
+The accuracy of these models is evaluated using the misclassification error, which is minimized by a classifier that assigns the most probable class to each observation, given the values of the predictor variables. This classifier, known as the Bayes classifier, operates under the assumption that the conditional probability of the outcome variable (Y) given the predictors (X) is known.
+
+However, for real data we do not know the conditional distribution of Y given X, and so computing the Bayes classifier is impossible. Hence, we can rely on different classification methods that are based on estimating the distribution of Y\|X and use the estimated probability to classify data.
+
+```{r}
+time.1 = rep(0,5)
+```
+
+## Logistic regression
+
+Logistic regression is an interpretable and straightforward to implement method that directly models the probability P(Y\|X), representing the likelihood of success for marketing campaigns. To evaluate the model's performance, we require a definitive prediction for Y. This is achieved by setting a threshold on the estimated probability, typically at 0.5. Any probability exceeding this threshold is classified as a positive outcome, while probabilities below are classified as negative outcomes.
+
+```{r}
+set.seed(22)
+time.1[1] = system.time({
+  logistic = glm(y ~ ., data = train, family = 'binomial')
+  yhat.logistic = predict(logistic, newdata=test, type='response')
+  prediction.logistic = factor(ifelse(yhat.logistic>0.5,'yes','no'))
+})[3]
+
+cm.logistic = confusionMatrix(data=prediction.logistic,test[,18])
+```
+
+```{r}
+draw_confusion_matrix(cm.logistic)
+```
+
+```{r}
+auc.logit = rocplot(pred=yhat.logistic,truth=test$y,lwd=2,colorize=TRUE)
+text(0.85,0.1,paste0('AUC=',round(auc.logit[[1]],4)),font=2)
+```
+
+Provided results show that the model correctly classifies about the 83 per cent of the total observations, while the area under the curve, that is shown in the ROC plot, is equal to 0.805, suggesting that the model works quite well since we can achieve a reasonable TPR while holding low the FPR.
+
+Since the test set has been maintained unbalanced, consisting of many marketing campaigns with a negative outcome, setting a higher threshold would result in a greater accuracy of the model.
+
+## GAM
+
+If we think that the relationship between the response variable and some of the predictors is not linear, we can also use the structure of a GAM in a logistic regression, such that the effect of the predictors on the response is additive. Each predictor has a separate effect on Y, and there are no interaction effects between the predictors.
+
+Hence, we fit a GAM on the data set, using smoothing splines with 3 degrees of freedom for all numerical covariates.
+
+```{r, fig.width=8,fig.height=10}
+gam1 = gam(y~ s(age,3) + job + marital + education + housing + loan + contact + s(campaign,3) + s(previous,3) + poutcome + day_of_week + month + s(emp.var.rate,3) + s(cons.price.idx,3)+ s(cons.conf.idx,3)+ s(euribor3m,3) + s(nr.employed,3) ,data=train,family ='binomial')
+
+layout(matrix(1:20,nrow=5,byrow=TRUE))
+plot(gam1, se=TRUE, col ="red", lwd=2)
+```
+
+```{r}
+summary(gam1)
+```
+
+Looking at the plots and the summary of the model, we can observe that some of the numeric features actually show a linear relationship with the response variable, such as the number of employees, the consumer price index, the employment variation rate and the number of previous interactions.
+
+In the case of variables exhibiting a non-linear relationship instead, we perform cross-validation to select the optimal number of degrees of freedom, through a grid search.
+
+```{r}
+df.explore.part = seq(3,9,by=2)
+df.explore = expand.grid(df.explore.part,df.explore.part,df.explore.part, df.explore.part)
+### df.explore is a combination of the different 
+### values of the df that we want to 
+### explore. Its length in fact is 5^4
+
+head(df.explore)
+```
+
+```{r}
+accuracy.gam = double(dim(df.explore)[1])
+
+for(i in 1:dim(df.explore)[1]){
+
+    gam.ij = gam(y ~ s(age,df.explore[i,1]) + job + marital + education +
+                   housing + loan + contact + day_of_week + month + 
+                   s(campaign,df.explore[i,2]) + previous + poutcome +
+                   emp.var.rate + cons.price.idx + s(cons.conf.idx,df.explore[i,3])+
+                   s(euribor3m,df.explore[i,4]) + nr.employed,
+                   data = train, family ='binomial')
+    
+    yhat.gam = predict(gam.ij, test,type="response")
+    predicted.gam.ij =  factor(ifelse(yhat.gam>0.5,'yes','no'))
+    cm_gam.ij = confusionMatrix(data=predicted.gam.ij,test$y)
+    accuracy.gam[i] = cm_gam.ij$overall[1]
+}
+```
+
+```{r}
+names.var = c('Age', 'Campaign', 'Cons.conf.idx', 'euribor3m')
+
+plot(accuracy.gam, type = 'b', lwd = 3, col = factor(df.explore[,1]), xlab = "Index", ylab = "Accuracy", main = "Accuracy vs. Smoothing Parameter")
+legend("topright", legend = names.var[1], col = unique(factor(df.explore[,1])), lty = 1, cex = 0.8)
+
+plot(accuracy.gam, type = 'b', lwd = 3, col = factor(df.explore[,2]), xlab = "Index", ylab = "Accuracy", main = "Accuracy vs. Smoothing Parameter")
+legend("topright", legend = names.var[2], col = unique(factor(df.explore[,2])), lty = 1, cex = 0.8)
+
+plot(accuracy.gam, type = 'b', lwd = 3, col = factor(df.explore[,3]), xlab = "Index", ylab = "Accuracy", main = "Accuracy vs. Smoothing Parameter")
+legend("topright", legend = names.var[3], col = unique(factor(df.explore[,3])), lty = 1, cex = 0.8)
+
+plot(accuracy.gam, type = 'b', lwd = 3, col = factor(df.explore[,4]), xlab = "Index", ylab = "Accuracy", main = "Accuracy vs. Smoothing Parameter")
+legend("topright", legend = names.var[4], col = unique(factor(df.explore[,4])), lty = 1, cex = 0.8)
+```
+
+The provided plots illustrate how the accuracy of the model varies with respect to the chosen number of degrees of freedom of the smoothing splines. Each color in the plots corresponds to a specific number of degrees of freedom: black corresponds to 3 degrees of freedom, red to 5, green to 7, and blue to 9.
+
+As a result, the optimal number of degrees of freedom for maximizing model accuracy across the four predictors under consideration is determined as follows: 3 for age, 3 for the number of interactions performed during the campaign, 9 for the consumer confidence index, and 3 for the euribor 3-month rate.
+
+We then fit again the model incorporating these enhancements for the numerical covariates:
+
+```{r}
+time.1[2] = system.time({
+  gam2 = gam(y ~ s(age,3) + job + marital + education +
+                   housing + loan + contact + s(campaign,3) + previous + poutcome +
+                   emp.var.rate  + day_of_week + month +  cons.price.idx + 
+                   s(cons.conf.idx,9)+
+                   s(euribor3m,3) + nr.employed,
+                   data = train, family ='binomial')
+  yhat.gam2 = predict(gam2, test,type="response")
+  predicted.gam2 =  factor(ifelse(yhat.gam2>0.5,'yes','no'))
+
+})[3]
+
+summary(gam2)
+```
+
+The model summary indicates that nearly all the information is statistically significant for predicting the outcome of the marketing campaign, with the exception of variables related to the client's personal and housing loan status, as well as the current euribor rate.
+
+```{r}
+cm.gam2 = confusionMatrix(data=predicted.gam2,test$y)
+draw_confusion_matrix(cm.gam2)
+```
+
+```{r}
+auc.gam2 = rocplot(pred=yhat.gam2,truth=test$y,lwd=2,colorize=TRUE)
+text(0.85,0.1,paste0('AUC=',round(auc.gam2[[1]],4)),font=2)
+```
+
+The model achieves an accuracy level and an AUC that are essentially identical to those of the simpler logistic regression. This suggests that incorporating non-linear effects does not have a substantial impact on the model's performance.
+
+## KNN
+
+K-Nearest Neighbours estimates the unknown conditional probability of Y given X in a nonparamteric way, using the data included in neighborhoods of each point. Since it relies on the fact that there exists a distance between covariates, it only works with numerical ones. Hence, we derive two new train and test sets that contain only numerical predictors.
+
+The performance of this classifier is highly sensitive to the choice of the number of neighbors, denoted as K. If K is too low, the model may exhibit high accuracy on the training data but could result in an overly flexible decision boundary, leading to poor performance on the test set. Conversely, if K is too high, the classification boundary may become excessively smooth, yielding a highly biased result.
+
+To address this sensitivity, we conduct cross-validation to determine the optimal number of neighbors to use in the model.
+
+```{r}
+set.seed(22)
+num.cov = df[,c(1,10,11,13,14,15,16,17)]
+scaled.num.cov = as.data.frame(scale(num.cov))
+scaled.df = as.data.frame(cbind(scaled.num.cov, "y"= df$y))
+
+test.num = as.data.frame(scaled.df[select.test,])
+train.num = as.data.frame(scaled.df[c(select.train,i2[-select.test]),])
+
+k.explore = 1:30
+set.seed(22)
+nfolds = 10
+folds = sample(1:nfolds,dim(train.num)[1],replace = TRUE)
+CVerror = matrix(ncol=length(k.explore),nrow=nfolds)
+
+for(j in 1:nfolds){
+  for(k in k.explore){
+    prediction.KNN = knn(train.num[which(folds!=j),1:8],
+                                train.num[which(folds==j),1:8],
+                                cl=train.num[which(folds!=j),9],k=k) 
+    CVerror[j,k] = mean(prediction.KNN != train.num[which(folds==j),9])
+  }
+}
+```
+
+```{r}
+plot(colMeans(CVerror), type='b', pch = 16)
+abline(v = which.min(colMeans(CVerror)), col = 'red', lty = 2, lwd = 2)
+```
+
+The optimal number of neighbours seems to be equal to 27, as it minimizes the cross-validation error. However, looking at the plot, we observe that choosing a smaller number of neighbors, such as 18, does not significantly alter the error compared to 27.
+
+Given the abundant size of our data set, we opt for the value that minimizes the cross-validation error, which is 27 in this case.
+
+```{r}
+set.seed(22)
+k.best = which.min(colMeans(CVerror))
+
+time.1[3] = system.time({
+  prediction.KNN = knn(train.num[,-9],test.num[,-9], cl = train.num[,9], k=k.best,
+                     prob = TRUE)
+})[3]
+
+cm.knn = confusionMatrix(data=prediction.KNN, test.num[,9])
+draw_confusion_matrix(cm.knn)
+```
+
+```{r}
+yhat.KNN = attr(prediction.KNN,"prob")
+yhat.KNN = ifelse(prediction.KNN == 'no', 1-yhat.KNN, yhat.KNN) 
+auc.KNN = rocplot(pred=yhat.KNN,truth = test.num$y,lwd=2,colorize=TRUE)
+text(0.85,0.1,paste0('AUC=',round(auc.KNN[[1]],4)),font=2)
+```
+
+Results exhibit that KNN achieves a slightly lower accuracy level with respect to the previous models, while the area under the curve remains consistent.
+
+## Classification tree
+
+Trees are another type of nonparametric models, since they make no assumptions about the underlying distribution of the data. The idea of this approach consists in splitting the observations into several groups based on the values of the predictors, and then predicting Y as the most commonly occurring value of training observations for each region.
+
+```{r}
+tree.fit = tree(y ~ ., data = train, split = 'gini')
+set.seed(22)
+cv.tree = cv.tree(tree.fit, FUN=prune.misclass, K = 100)
+```
+
+Since the terminal number of nodes is quite huge, we perform a cross-validation on the size of the tree in order to select the optimal number of final leaves, that seems to be equal to 2 in this case. However, as we would like to get a model that is a bit more informative, we choose a slightly higher number of final leaves between 4 and 6.
+
+```{r}
+plot(cv.tree$size, cv.tree$dev, type="b", xlim = c(0,50), 
+     xlab = "Size of tree", ylab = "CV error")
+```
+
+Trees are interesting models because of their interpretability. Indeed, we can visualize and understand the resulting tree, allowing us to extract insights about the importance of the variables and to explain model predictions to stakeholders.
+
+```{r}
+time.1[4] = system.time({
+  prune.fit = prune.misclass(tree.fit, best = 4)
+  yhat.tree = predict(prune.fit, newdata = test)
+  prediction.tree = factor(ifelse(yhat.tree[,1] > 0.5,'no','yes'))
+
+})[3]
+
+plot(prune.fit)
+text(prune.fit, pretty=1, cex = 0.8, col="blue", font=2)
+```
+
+The variables producing the first splits can be interpreted as the variables that are most important for predicting the outcome of the campaign. For instance, when the count of prior interactions exceeds one, clients tend to subscribe to the term deposit; conversely, when there are no prior interactions, the success of the marketing campaign depends on the volume of contacts during the campaign itself, and so forth. Hence, the variables that we can consider to be those that influence the most the outcome of the marketing campaign are *previous*, *campaing* and *euribor3m*.
+
+```{r}
+cm.tree = confusionMatrix(data=prediction.tree,test[,18])
+draw_confusion_matrix(cm.tree)
+```
+
+```{r}
+auc.tree = rocplot(pred=1-yhat.tree[,1],truth=test$y,lwd=2,colorize=TRUE)
+text(0.8,0.2,paste0('AUC=',round(auc.tree[[1]],4)),font=2)
+```
+
+However, the performance of the tree is worse with respect to the previous models, as it is illustrated by the accuracy and the ROC curve.
+
+## Random Forest
+
+Despite of their interpretability, trees tend to be highly instable, especially with correlated variables, because with a small variation of the data at hand, we could estimate a very different tree. To reduce their variance we can bootstrap, by taking repeated samples from the training set and fitting the model once per each sample. The overall prediction will be the most commonly occurring class among all the predictions.
+
+Moreover, since the trees obtained in different runs are estimated from rather similar data sets, they could be quite correlated between each other, as well as their predictions. Because of this, we select through cross-validation the optimal size of a random sample of *m* covariates (where *m* \< *p*) that is considered as candidate for each split.
+
+We perform cross-validation by taking into account both the test set error rate and the out of bag error. Indeed, at each run we use about two thirds of the training observations to fit the tree, and we can use the *out of bag* observations as an additional test set at each iteration.
+
+```{r message=FALSE, warning=FALSE}
+set.seed(22)
+oob.err = double(p)
+test.err = double(p)
+
+n.train = dim(train)[1]
+subtrain.index = sample(1:n.train,round(n.train/3*2))
+
+for(mtry in 1:p){
+  rf = randomForest(y ~ . , data = train, subset = subtrain.index,
+                     mtry=mtry, ntree=200) 
+  oob.err[mtry] = rf$err.rate[200,1] #OOB Error of all Trees fitted
+  pred = predict(rf,test) #Predictions on Test Set for each Tree
+  test.err[mtry] =  mean((test$y != pred))
+}
+
+matplot(1:mtry , cbind(oob.err,test.err), pch=19 , col=c("red","blue"), type="b",
+        ylab="Misclassification Error Rate", 
+        xlab="Number of Predictors Considered at each Split")
+legend("bottomright", legend=c("Out of Bag Error","Test Error"),pch=19, col=c("red","blue"))
+```
+
+The substantial difference between the Out-of-Bag (OOB) and test set errors is attributed to the inherent differences in the train and test sets compositions. Specifically, the test set, that is used for computing the test error, accurately reflects the real distribution of the data, including for the most part marketing campaigns with negative outcomes.
+
+The suggested number of variables to consider for each split is equal to two, since it minimizes both the errors.
+
+Unlike trees, in random forests it is difficult to interpret the results since the tree diagram is different at each run. We can rather look at the importance of the variables, looking at the mean decrease of the Gini index obtained thanks to the variables and at the mean decrease in the model's accuracy associated with the removal of a variable.
+
+```{r}
+set.seed(22)
+time.1[5] = system.time({
+  rf.clas = randomForest(y ~ ., data = train, mtry = 2, ntree = 1000,
+                          importance = TRUE, type = "classification")
+  yhat.rf = predict(rf.clas, newdata = test, type='prob')
+  prediction.rf = factor(ifelse(yhat.rf[,1]>0.5,'no','yes'))
+})[3]
+importance(rf.clas)
+varImpPlot(rf.clas)
+```
+
+The most important variables to predict the outcome of a marketing campaign seem to be the month of the last interaction with the client, the euribor-3-month rate, the number of employees. These considerations are opposed to the insights that we have derived from the tree, and this could be due to the high variance that characterizes the tree, as we observed before.
+
+```{r warning=FALSE}
+cm.rf = confusionMatrix(data=prediction.rf, test$y)
+draw_confusion_matrix(cm.rf) 
+```
+
+```{r}
+auc.rf = rocplot(pred=1-yhat.rf[,1],truth=test$y,lwd=2,colorize=TRUE)
+text(0.8,0.2,paste0('AUC=',round(auc.rf[[1]],4)),font=2)
+```
+
+The model actually improves the results obtained with the classification tree, since the accuracy is approximately equal to the 86 per cent and the AUC reaches a value of 0.881.
+
+Therefore, random forest seems to be the most effective model to predict the result of a marketing campaign among the ones we have implemented.
+
+# PCA
+
+Principal component analysis is a dimension reduction method based on transforming the original predictors and fitting least-squares on the new transformed data set. Since our data set consists of several variables that can be divided in groups, we want to explore their association in order to identify the most correlated ones and try to include them in the analysis through principal components.
+
+For this method we only consider the numerical covariates (*age*, *campaign*, *previous*, *emp.var.rate*, *cons.price.idx*, *cons.conf.idx*, *euribor3m*, *nr.employed*), and we scale them.
+
+Looking at the correlation matrix, we can choose which variables are the most correlated: the plot below suggests us to consider the following covariates: *emp.var.rate*, *cons.price.idx*, *euribor3m*, *nr.employed*.
+
+```{r}
+
+cor.matrix = cor(scaled.num.cov)
+
+melted.cor = melt(cor.matrix)
+
+ggplot(melted.cor, aes(x = Var1, y = Var2)) +
+  geom_tile(aes(fill = value), color = "white") +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "lightblue", midpoint = 0, 
+                       limit = c(-1,1), space = "Lab", name="Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Correlation Matrix")
+```
+
+Both the scree plot and the cumulative scree plot indicate that the first principal component explains almost all the variability (85.74%).
+
+```{r}
+pca.1 = prcomp(scaled.num.cov[,c(4,5,7,8)])
+
+sd = pca.1$sdev
+
+par(mfrow = c(1,2))
+# screeplot
+plot(sd^2/sum(sd^2),type="o",pch=19,xlab="Component", 
+     main = "Scree plot",ylab='Proportion of variance')
+abline(h=1/length(sd),col='gray')
+grid()
+
+#cumulative
+plot(cumsum(sd^2)/sum(sd^2),type="o",pch=19,xlab="Component", 
+     main = "Cumulative scree plot",ylab='Cumulative proportion of variance',
+     ylim=c(0,1))
+grid()
+abline( h = (0.85), col="gray")
+```
+
+```{r}
+sd^2/sum(sd^2)
+```
+
+Examining the outcomes of PCA we opt to replace the four most correlated numerical covariates with the first principal component, which evenly encapsulates the significance of these covariates.
+
+```{r}
+barplot(pca.1$rotation[,1], col = "darkgreen")
+```
+
+The following chunk creates the new reduced data set with the PC1, which is divided in the measure of 85% for the train (again rebalanced as before) and the remaining part for the test.
+
+```{r message=FALSE, warning=FALSE}
+pc1 = pca.1$x[,1]
+
+set.seed(22)
+
+df.14 = cbind(pc1,df[,-c(13,14,16,17)]) 
+num.cov.14 = df.14[,c(1,2,11,12,14)]
+scaled.num.cov.14 = as.data.frame(scale(num.cov.14))
+scaled.df.14 = as.data.frame(cbind(scaled.num.cov.14, "y"= df.14$y))
+
+n = dim(df.14)[1]
+p.14 = dim(df.14)[2] - 1
+
+test.14 = df.14[select.test ,]
+train.14 = df.14[c(select.train,i2[-select.test]),]
+```
+
+# Modified data set
+
+Considering all the insights gained from the previous models, we try to make the classification methods more computationally efficient. To *lighten* the data set, we decide to remove four correlated variables (as explained in the PCA paragraph) and replace them with the first principal component, which alone explains almost 85% of their variability. Furthermore, we remove *loan*, *housing* and *day_of_week* variables from the data set, since they do not seem to significantly influence the outcome of a marketing campaign based on the results of the GAM and the random forest.
+
+```{r}
+test.14.num = as.data.frame(scaled.df.14[select.test,])
+train.14.num = as.data.frame(scaled.df.14[c(select.train,i2[-select.test]),])
+
+# removing loan,housing,day_of_week
+train.14 = train.14[,-c(6,7,10)]
+test.14 = test.14[,-c(6,7,10)]
+
+time.2 = rep(0,5)
+```
+
+## Logistic regression
+
+```{r}
+set.seed(22)
+time.2[1] = system.time({
+  logistic.14 = glm(y ~ ., data = train.14, family = 'binomial')
+  yhat.logistic.14 = predict(logistic.14, newdata=test.14, type='response')
+    prediction.logistic.14 = factor(ifelse(yhat.logistic.14>0.5,'yes','no'))
+})[3]
+cm.logistic.14 = confusionMatrix(data=prediction.logistic.14,test.14$y)
+draw_confusion_matrix(cm.logistic.14)
+```
+
+```{r}
+auc.logistic = rocplot(pred=yhat.logistic,truth=test.14$y,lwd=2,colorize=TRUE)
+text(0.85,0.1,paste0('AUC=',round(auc.logistic[[1]],4)),font=2)
+```
+
+## GAM
+
+We fit again the GAM, using smoothing splines with the above identified degrees of freedom for all numerical variables, except for *campaign* and *previous*, since we have previously observed their linear relationship with the response variable.
+
+```{r,fig.width=8,fig.height=7}
+gam1.14 = gam(y~ s(age,3) + job + marital + month  + education + contact + campaign + 
+                previous + poutcome + s(cons.conf.idx,9) + s(pc1,3), data = train.14,
+              family ='binomial')
+
+layout(matrix(1:12,nrow=3,ncol=4,byrow=TRUE))
+plot(gam1.14, se=TRUE, col ="red", lwd=2)
+```
+
+We perform a grid search, by exploring the range of odds number between 1 and 11, to select the optimal number of degrees of freedom for the principal component, although it seems to be quite linearly related to the response.
+
+```{r}
+df.explore.pc1 = seq(1,11,by=2)
+
+accuracy.gam.pc1 = double(length(df.explore.pc1))
+
+for(i in 1:length(df.explore.pc1)){
+
+    gam.ij.14 = gam(y~ s(age,3) + job + marital + education + 
+                    contact + campaign + month + previous + poutcome + s(cons.conf.idx,9) +
+                    s(pc1,df.explore.pc1[i]), data=train.14, family ='binomial')
+    
+    yhat.gam.ij.14 = predict(gam.ij.14, test.14,type="response")
+    predicted.gam.ij.14 =  factor(ifelse(yhat.gam.ij.14>0.5,'yes','no'))
+    cm_gam.ij.14 = confusionMatrix(data=predicted.gam.ij.14,test.14$y)
+    accuracy.gam.pc1[i] = cm_gam.ij.14$overall[1]
+}
+```
+
+```{r}
+plot(df.explore.pc1, accuracy.gam.pc1, type = 'b', lwd = 3, 
+     col = factor(df.explore.pc1), xlab = "Index", ylab = "Accuracy",
+     main = "Accuracy vs. PC1 Parameter",
+     xlim = c(min(df.explore.pc1), max(df.explore.pc1)))
+```
+
+Indeed, the number of degrees of freedom for the principal component that maximizes the accuracy of the model is equal to 1, then we include it without non-linear functions.
+
+```{r}
+time.2[2] = system.time({
+  gam2.14 = gam(y~ s(age,3) + job + marital + education  + 
+                    contact + campaign + previous + poutcome + 
+                    s(cons.conf.idx,9) +
+                    pc1, data=train.14, family ='binomial')
+  yhat.gam2.14 = predict(gam2.14, test.14,type="response")
+  predicted.gam2.14 =  factor(ifelse(yhat.gam2.14>0.5,'yes','no'))
+})[3]
+cm.gam2.14 = confusionMatrix(data=predicted.gam2.14,test.14$y)
+draw_confusion_matrix(cm.gam2.14)
+```
+
+```{r}
+auc.gam2.14 = rocplot(pred=yhat.gam2.14,truth=test.14$y,lwd=2,colorize=TRUE)
+text(0.85,0.1,paste0('AUC=',round(auc.gam2.14[[1]],4)),font=2)
+```
+
+## KNN
+
+```{r}
+k.explore = 1:30
+set.seed(22)
+CVerror.14 = matrix(ncol=length(k.explore), nrow=nfolds)
+
+for(j in 1:nfolds){
+  for(k in k.explore){
+    prediction.KNN.14 = knn(train.14.num[which(folds!=j),1:5],
+                                train.14.num[which(folds==j),1:5],
+                                cl=train.14.num[which(folds!=j),6],k=k) 
+    CVerror.14[j,k] = mean(prediction.KNN.14 != train.14.num[which(folds==j),6])
+  }
+}
+```
+
+```{r}
+plot(colMeans(CVerror.14),type='b',lwd=3)
+abline(v = which.min(colMeans(CVerror.14)), col = 'red', lty = 2, lwd = 2)
+```
+
+```{r}
+set.seed(22)
+k.best.14 = which.min(colMeans(CVerror.14))
+time.2[3] = system.time({
+  prediction.KNN.14 = knn(train.14.num[,-6], test.14.num[,-6], 
+                          cl = train.14.num[,6], 
+                          k=k.best.14, prob = TRUE)
+})[3]
+cm.knn.14 = confusionMatrix(data=prediction.KNN.14, test.14.num[,6])
+draw_confusion_matrix(cm.knn.14)
+```
+
+```{r}
+yhat.KNN.14 = attr(prediction.KNN.14,"prob")
+yhat.KNN.14 = ifelse(prediction.KNN.14 == 'no', 1-yhat.KNN.14, yhat.KNN.14) 
+auc.KNN.14 = rocplot(pred=yhat.KNN.14,truth=test.14.num$y,lwd=2,colorize=TRUE)
+text(0.85,0.1,paste0('AUC=',round(auc.KNN.14[[1]],4)),font=2)
+```
+
+## Classification tree
+
+```{r}
+tree.fit.14 = tree(y ~ ., data = train.14, split = 'gini')
+set.seed(22)
+cv.tree.14 = cv.tree(tree.fit.14, FUN=prune.misclass, K = 100)
+```
+
+```{r}
+par(mfrow = c(1,2))
+plot(cv.tree.14$size, cv.tree.14$dev, type="b", xlim = c(0,50), 
+     xlab = "Size of tree", ylab = "CV error")
+plot(cv.tree.14$size, cv.tree.14$dev, type="b", xlim = c(0,10), 
+     xlab = "Size of tree", 
+     ylab = "CV error", main = "Zoomed plot")
+```
+
+```{r}
+time.2[4] = system.time({
+  prune.fit.14 = prune.misclass(tree.fit.14, best = 6)
+  yhat.tree.14 = predict(prune.fit.14, newdata = test.14)
+  prediction.tree.14 = factor(ifelse(yhat.tree.14[,1] > 0.5,'no','yes'))
+})[3]
+  
+plot(prune.fit.14)
+text(prune.fit.14, pretty=1, cex = 0.65, col="blue", font=2)
+```
+
+The resulting classification tree actually illustrates that the principal component is quite relevant to predict the outcome of the campaign, together with *previous* and *campaign* variables.
+
+```{r}
+cm.tree.14 = confusionMatrix(data=prediction.tree.14,test.14$y)
+draw_confusion_matrix(cm.tree.14)
+```
+
+```{r}
+auc.tree.14 = rocplot(pred=1-yhat.tree.14[,1],truth=test.14$y,lwd=2,colorize=TRUE)
+text(0.8,0.2,paste0('AUC=',round(auc.tree.14[[1]],4)),font=2)
+```
+
+## Random Forest
+
+```{r message=FALSE, warning=FALSE}
+set.seed(22)
+oob.err.14 = double(p.14)
+test.err.14 = double(p.14)
+
+for(mtry in 1:p.14){
+  rf = randomForest(y ~ . , data = train.14, subset = subtrain.index,
+                     mtry=mtry, ntree=200) 
+  oob.err.14[mtry] = rf$err.rate[200,1] #OOB Error of all Trees fitted
+  pred = predict(rf,test.14) #Predictions on Test Set for each Tree
+  test.err.14[mtry] =  mean((test.14$y != pred))
+}
+
+matplot(1:mtry , cbind(oob.err.14, test.err.14), pch=19 , col=c("red","blue"), type="b",
+        ylab="Misclassification Error Rate", 
+        xlab="Number of Predictors Considered at each Split")
+legend("right", legend=c("Out of Bag Error","Test Error"),pch=19, col=c("red","blue"))
+```
+
+```{r}
+set.seed(22)
+time.2[5] = system.time({
+  rf.clas.14 = randomForest(y ~ ., data = train.14, mtry = 2, ntree = 1000, 
+                          importance = TRUE)
+  yhat.rf.14 = predict(rf.clas.14, newdata = test.14, type='prob')
+  prediction.rf.14 = factor(ifelse(yhat.rf.14[,1]>0.5,'no','yes'))
+})[3]
+
+cm.rf.14 = confusionMatrix(data=prediction.rf.14, test.14$y)
+draw_confusion_matrix(cm.rf.14)
+```
+
+```{r}
+auc.rf.14 = rocplot(pred=1-yhat.rf.14[,1],truth=test.14$y,lwd=2,colorize=TRUE)
+text(0.8,0.2,paste0('AUC=',round(auc.rf.14[[1]],4)),font=2)
+```
+
+```{r}
+importance(rf.clas.14)
+varImpPlot(rf.clas.14)
+```
+
+The random forest method confirms that the principal component is one of the most important variables of the model, followed by the month of the last interaction, the consumer confidence index and the outcome of the previous campaign.
+
+# Conclusions
+
+```{r}
+accuracy.1 = rep(0,5)
+accuracy.1[1] = cm.logistic$overall[1]
+accuracy.1[2] = cm.gam2$overall[1]
+accuracy.1[3] = cm.knn$overall[1]
+accuracy.1[4] = cm.tree$overall[1]
+accuracy.1[5] = cm.rf$overall[1]
+
+accuracy.2 = rep(0,5)
+accuracy.2[1] = cm.logistic.14$overall[1]
+accuracy.2[2] = cm.gam2.14$overall[1]
+accuracy.2[3] = cm.knn.14$overall[1]
+accuracy.2[4] = cm.tree.14$overall[1]
+accuracy.2[5] = cm.rf.14$overall[1]
+```
+
+Results demonstrate that models trained on the reduced data set exhibit slightly inferior performance compared to those trained on the entire data set, as shown in the following plot.
+
+```{r}
+accuracy.res. <- data.frame(Mod = c("Logistic", "GAM", "KNN", 
+                                 "Classification Tree", "Random Forest"),
+                         Original.data = accuracy.1,
+                         Modified.data = accuracy.2)
+
+accuracy.melt <- melt(accuracy.res., id.vars = "Mod", 
+                      measure.vars = c("Original.data", "Modified.data"),
+                      variable.name = "Dataset", 
+                      value.name = "Accuracy")
+
+my_colors <- c("#009E73", "#56B4E9")  
+
+ggplot(accuracy.melt, aes(x = Mod, y = Accuracy, fill = Dataset)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Comparison",
+       y = "Accuracy",
+       x = "Model") +
+  scale_fill_manual(values = my_colors) +  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Nonetheless, it's important to keep in mind the trade-off between model complexity and performance. We can consider the running time of each algorithm to take into account this perspective. As illustrated in the following table, the training phase of each model requires more computational resources when it is done on the whole data set, although the differences are quite negligible. Moreover, we can observe that the Random Forest needs much more time than the others, since it involves the implementation of many trees.
+
+```{r warning=FALSE}
+data_table <- data.frame(Model = c("Logistic", "GAM", "KNN", "Classification Tree", "Random Forest"),
+                         Accuracy.1 = accuracy.1,
+                         Time.1 = time.1,
+                         Accuracy.2 = accuracy.2,
+                         Time.2 = time.2)
+
+kable(data_table, 
+      col.names = c("Model", "Accuracy", "Time", "Accuracy", "Time"), 
+      caption = "Model comparison") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r}
+data.res.2 <- data.frame(Mod = c("Logistic", "GAM", "KNN", 
+                                "Classification Tree", "Random Forest"),
+                   Accuracy = accuracy.2,
+                   Time = time.2)
+
+ggplot(data.res.2, aes(x = Time, y = Accuracy, color = Mod)) +
+  geom_point(size = 3) +
+  geom_text(aes(label = Mod), hjust = 0.5, vjust = -0.5, size = 4) +
+  labs(title = "Model comparison",
+       x = "Time (seconds)",
+       y = "Accuracy") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  xlim(c(-5,25)) +
+  ylim(c(0.72,0.88))
+```
+
+In conclusion, the random forest (RF) model achieves the highest accuracy on both data sets, despite its higher complexity. When considering the efficiency in terms of computational time, the lighter data set performed more efficiently. Depending on the specific objectives of the bank's marketing team, it is advisable to opt for the random forest model if the primary goal is to predict with greater precision whether a customer will accept the offer. On the other hand, if the aim is to conduct a more summary analysis without significant computational burden, logistic regression could be the most appropriate choice, since it approximately achieves the same accuracy of GAM and KNN, but it quite simpler.
